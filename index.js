@@ -1,6 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const { extraerLiquidacion } = require('./playwright');
+const pLimit = require('p-limit');
+const limit = pLimit(3); // máximo 3 Chromium simultáneos
 
 const app = express();
 app.use(express.json());
@@ -28,15 +30,16 @@ app.post('/extraer-liquidacion', async (req, res) => {
   }
 
   try {
-    await extraerLiquidacion({
-      rut_trabajador,
-      empresa_codigo,
-      mes,
-      anio,
-      correo_trabajador,
-      nombre_trabajador
-    });
-
+    await limit(() =>
+      extraerLiquidacion({
+        rut_trabajador,
+        empresa_codigo,
+        mes,
+        anio,
+        correo_trabajador,
+        nombre_trabajador
+      })
+    );
     res.json({ success: true, mensaje: 'Liquidación enviada correctamente' });
   } catch (error) {
     console.error('Error en extracción:', error.message);
