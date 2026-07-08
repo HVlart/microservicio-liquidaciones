@@ -131,4 +131,153 @@ async function extraerLiquidacion({ rut_trabajador, empresa_codigo, mes, anio, c
   }
 }
 
-module.exports = { extraerLiquidacion };
+function normalizarRut(rut) {
+  return String(rut).replace(/\./g, '').replace(/-/g, '').trim().toUpperCase();
+}
+
+function quitarAcentos(texto) {
+  return texto.normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+function parsearNumero(texto) {
+  return parseFloat(String(texto).replace(',', '.'));
+}
+
+function detectarColumnas(textosFila) {
+  const normalizados = textosFila.map(t => quitarAcentos(t).toLowerCase());
+  const idxRut = normalizados.findIndex(t => t.includes('rut'));
+  const idxDisponibles = normalizados.findIndex(t => t.includes('disponible'));
+  const idxUsados = normalizados.findIndex(t => t.includes('usado'));
+  const idxSaldo = normalizados.findIndex(t => t.includes('saldo'));
+
+  if (idxRut === -1 || idxDisponibles === -1 || idxUsados === -1 || idxSaldo === -1) {
+    return null;
+  }
+
+  return { rut: idxRut, disponibles: idxDisponibles, usados: idxUsados, saldo: idxSaldo };
+}
+
+async function consultarSaldoVacaciones({ rut_trabajador, numero_cliente }) {
+  const browser = await chromium.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  });
+
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  try {
+    console.log(`Consultando saldo de vacaciones: ${rut_trabajador} | ${numero_cliente}`);
+
+    // LOGIN
+    await page.goto('https://web.nubox.com/Login');
+
+    await page.getByRole('textbox', { name: 'Ingresa tu rut' }).click();
+    await page.getByRole('textbox', { name: 'Ingresa tu rut' }).type(process.env.NUBOX_RUT, { delay: 100 });
+
+    await page.getByRole('textbox', { name: 'Ingresa tu contraseña' }).click();
+    await page.getByRole('textbox', { name: 'Ingresa tu contraseña' }).type(process.env.NUBOX_PASSWORD, { delay: 100 });
+
+    await page.waitForTimeout(1000);
+    await page.getByRole('button', { name: 'Ingresar' }).click();
+
+    // Manejar sesión activa — opcional
+    try {
+      await page.getByRole('button', { name: 'Acceder de todas formas' }).waitFor({ timeout: 5000 });
+      await page.getByRole('button', { name: 'Acceder de todas formas' }).click();
+    } catch {
+      // No apareció, continuar normal
+    }
+
+    // NAVEGAR A COMPROBANTES DE FERIADOS
+    await page.getByText('Remuneraciones 2').click();
+    await page.getByRole('button', { name: 'Movimientos' }).first().click();
+    await page.getByRole('button', { name: 'Comprobantes de Feriados' }).click();
+
+    const frame = page.frameLocator('iframe[name="remMovimientosComprobanteFeriado.asp"]');
+
+    // SELECCIONAR EMPRESA (SujetoContable)
+    const sujetoSelect = frame.locator('#SujetoContable');
+    await sujetoSelect.waitFor({ timeout: 15000 });
+
+    const opciones = sujetoSelect.locator('option');
+    const textosOpciones = await opciones.allTextContents();
+    const indiceMatch = textosOpciones.findIndex(t => t.trim().startsWith(numero_cliente));
+
+    if (indiceMatch === -1) {
+      throw new Error(`Empresa no encontrada en Nubox: ${numero_cliente}`);
+    }
+
+    const valorMatch = await opciones.nth(indiceMatch).getAttribute('value');
+    await sujetoSelect.selectOption(valorMatch);
+
+    // ABRIR REPORTE VACACIONES
+    await frame.getByRole('link', { name: 'Reporte Vacaciones' }).click();
+
+    // ESPERAR CARGA DE TABLA (queda cargando unos segundos)
+    await frame.getByText('Saldo', { exact: false }).first().waitFor({ timeout: 15000 });
+
+    // BUSCAR FILA DEL TRABAJADOR (con soporte de paginación)
+    const rutNormalizado = normalizarRut(rut_trabajador);
+    let filaEncontrada = null;
+    const MAX_PAGINAS = 20;
+
+    for (let pagina = 0; pagina < MAX_PAGINAS && !filaEncontrada; pagina++) {
+      const filas = frame.locator('table tr');
+      const totalFilas = await filas.count();
+      let indicesColumnas = null;
+
+      for (let i = 0; i < totalFilas; i++) {
+        const celdas = filas.nth(i).locator('th, td');
+        const textosCelda = (await celdas.allTextContents()).map(t => t.trim());
+
+        if (!indicesColumnas) {
+          indicesColumnas = detectarColumnas(textosCelda);
+          continue;
+        }
+
+        if (textosCelda[indicesColumnas.rut] && normalizarRut(textosCelda[indicesColumnas.rut]) === rutNormalizado) {
+          filaEncontrada = {
+            dias_acumulados: parsearNumero(textosCelda[indicesColumnas.disponibles]),
+            dias_utilizados: parsearNumero(textosCelda[indicesColumnas.usados]),
+            saldo_antes: parsearNumero(textosCelda[indicesColumnas.saldo]),
+          };
+          break;
+        }
+      }
+
+      if (filaEncontrada) break;
+
+      // Verificar si existe paginación
+      const siguiente = frame.getByRole('link', { name: /siguiente|next|»|›/i })
+        .or(frame.getByRole('button', { name: /siguiente|next|»|›/i }));
+
+      const haySiguiente = await siguiente.count();
+      if (haySiguiente === 0) break;
+
+      const disabled = await siguiente.first().getAttribute('disabled');
+      if (disabled !== null) break;
+
+      await siguiente.first().click();
+      await page.waitForTimeout(1000);
+    }
+
+    if (!filaEncontrada) {
+      const error = new Error('Trabajador no encontrado en el reporte de vacaciones de Nubox');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    console.log(`Saldo de vacaciones encontrado para ${rut_trabajador}`);
+
+    return {
+      ...filaEncontrada,
+      consultado_en: new Date().toISOString()
+    };
+
+  } finally {
+    await browser.close();
+  }
+}
+
+module.exports = { extraerLiquidacion, consultarSaldoVacaciones };

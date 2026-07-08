@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const { extraerLiquidacion } = require('./playwright');
+const { extraerLiquidacion, consultarSaldoVacaciones } = require('./playwright');
 const pLimit = require('p-limit');
 const limit = pLimit(3); // máximo 3 Chromium simultáneos
 
@@ -44,6 +44,25 @@ app.post('/extraer-liquidacion', async (req, res) => {
   } catch (error) {
     console.error('Error en extracción:', error.message);
     res.status(500).json({ error: error.message || 'Error al procesar la liquidación' });
+  }
+});
+
+app.post('/consultar-saldo-vacaciones', async (req, res) => {
+  const { rut_trabajador, numero_cliente } = req.body;
+
+  if (!rut_trabajador || !numero_cliente) {
+    return res.status(400).json({ error: 'Datos incompletos' });
+  }
+
+  try {
+    const resultado = await limit(() =>
+      consultarSaldoVacaciones({ rut_trabajador, numero_cliente })
+    );
+    res.json(resultado);
+  } catch (error) {
+    console.error('Error al consultar saldo de vacaciones:', error.message);
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: error.message || 'Error al consultar el saldo de vacaciones' });
   }
 });
 
