@@ -214,6 +214,17 @@ async function consultarSaldoVacaciones({ rut_trabajador, numero_cliente }) {
     // ABRIR REPORTE VACACIONES
     await frame.getByRole('link', { name: 'Reporte Vacaciones' }).click();
 
+    // DIAGNÓSTICO TEMPORAL — remover una vez identificado el frame del reporte
+    await page.waitForTimeout(3000);
+    console.log('DEBUG frames:', JSON.stringify(page.frames().map(f => ({ name: f.name(), url: f.url() }))));
+    console.log('DEBUG page.title():', await page.title());
+    try {
+      await page.screenshot({ path: '/tmp/debug-vacaciones.png' });
+      console.log('DEBUG screenshot guardado en /tmp/debug-vacaciones.png');
+    } catch (screenshotError) {
+      console.log('DEBUG screenshot falló:', screenshotError.message);
+    }
+
     // ESPERAR CARGA DE TABLA (queda cargando unos segundos)
     await frame.getByText('Saldo', { exact: false }).first().waitFor({ timeout: 15000 });
 
