@@ -211,22 +211,14 @@ async function consultarSaldoVacaciones({ rut_trabajador, numero_cliente }) {
     const valorMatch = await opciones.nth(indiceMatch).getAttribute('value');
     await sujetoSelect.selectOption(valorMatch);
 
-    // ABRIR REPORTE VACACIONES
+    // ABRIR REPORTE VACACIONES (abre un iframe nuevo y separado)
     await frame.getByRole('link', { name: 'Reporte Vacaciones' }).click();
 
-    // DIAGNÓSTICO TEMPORAL — remover una vez identificado el frame del reporte
-    await page.waitForTimeout(3000);
-    console.log('DEBUG frames:', JSON.stringify(page.frames().map(f => ({ name: f.name(), url: f.url() }))));
-    console.log('DEBUG page.title():', await page.title());
-    try {
-      await page.screenshot({ path: '/tmp/debug-vacaciones.png' });
-      console.log('DEBUG screenshot guardado en /tmp/debug-vacaciones.png');
-    } catch (screenshotError) {
-      console.log('DEBUG screenshot falló:', screenshotError.message);
-    }
+    await page.waitForSelector('iframe[name="remReporteVacacionesFuncionarios.asp"]', { timeout: 15000 });
+    const reporteFrame = page.frameLocator('iframe[name="remReporteVacacionesFuncionarios.asp"]');
 
     // ESPERAR CARGA DE TABLA (queda cargando unos segundos)
-    await frame.getByText('Saldo', { exact: false }).first().waitFor({ timeout: 15000 });
+    await reporteFrame.getByText('Saldo', { exact: false }).first().waitFor({ timeout: 15000 });
 
     // BUSCAR FILA DEL TRABAJADOR (con soporte de paginación)
     const rutNormalizado = normalizarRut(rut_trabajador);
@@ -234,7 +226,7 @@ async function consultarSaldoVacaciones({ rut_trabajador, numero_cliente }) {
     const MAX_PAGINAS = 20;
 
     for (let pagina = 0; pagina < MAX_PAGINAS && !filaEncontrada; pagina++) {
-      const filas = frame.locator('table tr');
+      const filas = reporteFrame.locator('table tr');
       const totalFilas = await filas.count();
       let indicesColumnas = null;
 
@@ -260,8 +252,8 @@ async function consultarSaldoVacaciones({ rut_trabajador, numero_cliente }) {
       if (filaEncontrada) break;
 
       // Verificar si existe paginación
-      const siguiente = frame.getByRole('link', { name: /siguiente|next|»|›/i })
-        .or(frame.getByRole('button', { name: /siguiente|next|»|›/i }));
+      const siguiente = reporteFrame.getByRole('link', { name: /siguiente|next|»|›/i })
+        .or(reporteFrame.getByRole('button', { name: /siguiente|next|»|›/i }));
 
       const haySiguiente = await siguiente.count();
       if (haySiguiente === 0) break;
