@@ -230,6 +230,16 @@ async function consultarSaldoVacaciones({ rut_trabajador, numero_cliente }) {
       const totalFilas = await filas.count();
       let indicesColumnas = null;
 
+      // DIAGNÓSTICO TEMPORAL — remover una vez resuelto el matcheo de RUT
+      console.log(`DEBUG página ${pagina + 1} — filas detectadas: ${totalFilas}`);
+      console.log('DEBUG rutNormalizado buscado:', rutNormalizado);
+      try {
+        const tablaTexto = await reporteFrame.locator('table').first().innerText();
+        console.log('DEBUG texto completo de la tabla:', tablaTexto);
+      } catch (debugError) {
+        console.log('DEBUG no se pudo obtener innerText de la tabla:', debugError.message);
+      }
+
       for (let i = 0; i < totalFilas; i++) {
         const celdas = filas.nth(i).locator('th, td');
         const textosCelda = (await celdas.allTextContents()).map(t => t.trim());
@@ -239,7 +249,10 @@ async function consultarSaldoVacaciones({ rut_trabajador, numero_cliente }) {
           continue;
         }
 
-        if (textosCelda[indicesColumnas.rut] && normalizarRut(textosCelda[indicesColumnas.rut]) === rutNormalizado) {
+        const rutFilaNormalizado = textosCelda[indicesColumnas.rut] ? normalizarRut(textosCelda[indicesColumnas.rut]) : null;
+        console.log(`DEBUG fila ${i}: rut original="${textosCelda[indicesColumnas.rut]}" normalizado="${rutFilaNormalizado}" vs buscado="${rutNormalizado}" match=${rutFilaNormalizado === rutNormalizado}`);
+
+        if (rutFilaNormalizado === rutNormalizado) {
           filaEncontrada = {
             dias_acumulados: parsearNumero(textosCelda[indicesColumnas.disponibles]),
             dias_utilizados: parsearNumero(textosCelda[indicesColumnas.usados]),
