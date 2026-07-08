@@ -226,7 +226,10 @@ async function consultarSaldoVacaciones({ rut_trabajador, numero_cliente }) {
     const MAX_PAGINAS = 20;
 
     for (let pagina = 0; pagina < MAX_PAGINAS && !filaEncontrada; pagina++) {
-      const filas = reporteFrame.locator('table tr');
+      // Tabla de resultados: debe contener las columnas "Rut" y "Saldo" a la vez,
+      // para no confundirla con el selector de empresa (#SujetoContable) u otras tablas de layout
+      const tablaResultados = reporteFrame.locator('table').filter({ hasText: 'Saldo' }).filter({ hasText: 'Rut' }).first();
+      const filas = tablaResultados.locator('tr');
       const totalFilas = await filas.count();
       let indicesColumnas = null;
 
@@ -234,7 +237,7 @@ async function consultarSaldoVacaciones({ rut_trabajador, numero_cliente }) {
       console.log(`DEBUG página ${pagina + 1} — filas detectadas: ${totalFilas}`);
       console.log('DEBUG rutNormalizado buscado:', rutNormalizado);
       try {
-        const tablaTexto = await reporteFrame.locator('table').first().innerText();
+        const tablaTexto = await tablaResultados.innerText();
         console.log('DEBUG texto completo de la tabla:', tablaTexto);
       } catch (debugError) {
         console.log('DEBUG no se pudo obtener innerText de la tabla:', debugError.message);
