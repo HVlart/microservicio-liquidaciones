@@ -157,6 +157,15 @@ function detectarColumnas(textosFila) {
   return { rut: idxRut, disponibles: idxDisponibles, usados: idxUsados, saldo: idxSaldo };
 }
 
+// DIAGNÓSTICO TEMPORAL — remover una vez confirmado que el postback de #SujetoContable no se pierde
+async function logOpcionSeleccionada(selectLocator, etiqueta) {
+  const seleccion = await selectLocator.evaluate(el => ({
+    value: el.value,
+    texto: el.options[el.selectedIndex] ? el.options[el.selectedIndex].text : null
+  }));
+  console.log(`DEBUG [${etiqueta}] #SujetoContable seleccionado — value: "${seleccion.value}", texto: "${seleccion.texto}"`);
+}
+
 async function consultarSaldoVacaciones({ rut_trabajador, numero_cliente }) {
   const browser = await chromium.launch({
     headless: true,
@@ -210,6 +219,16 @@ async function consultarSaldoVacaciones({ rut_trabajador, numero_cliente }) {
 
     const valorMatch = await opciones.nth(indiceMatch).getAttribute('value');
     await sujetoSelect.selectOption(valorMatch);
+
+    // DIAGNÓSTICO TEMPORAL — confirmar que la empresa seleccionada es la esperada
+    await logOpcionSeleccionada(sujetoSelect, 'inmediatamente después de selectOption');
+
+    // Esperar a que Nubox procese el postback del cambio de empresa (ASP clásico)
+    await frame.locator('body').waitFor();
+    await page.waitForTimeout(1500);
+
+    // DIAGNÓSTICO TEMPORAL — confirmar que la selección se mantiene tras la espera del postback
+    await logOpcionSeleccionada(sujetoSelect, 'antes de clic en Reporte Vacaciones');
 
     // ABRIR REPORTE VACACIONES (abre un iframe nuevo y separado)
     await frame.getByRole('link', { name: 'Reporte Vacaciones' }).click();
