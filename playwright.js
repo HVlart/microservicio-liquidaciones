@@ -4,6 +4,84 @@ const os = require('os');
 const path = require('path');
 const fs = require('fs');
 
+function renderEmailLiquidacion({ nombreTrabajador, mes, anio }) {
+  const nombre = nombreTrabajador || '';
+  return `
+<!DOCTYPE html>
+<html lang="es">
+  <body style="margin:0; padding:0; background-color:#F4F4F5;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#F4F4F5; padding:32px 16px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px; width:100%; background-color:#FFFFFF; border-radius:12px; overflow:hidden;">
+            <tr>
+              <td align="center" style="padding:24px 24px 0 24px;">
+                <img src="https://lartconsultores.cl/lc_verde.png" width="120" height="99" alt="Lart Consultores" style="display:block;">
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:16px 0 0 0;">
+                <div style="height:4px; line-height:4px; font-size:0; background-color:#16A34A;">&nbsp;</div>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding:24px 24px 0 24px;">
+                <p style="margin:0; font-size:24px; font-weight:bold; color:#0F766E; text-align:center;">
+                  Tu liquidación de sueldo — ${mes} ${anio}
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding:16px 24px 0 24px;">
+                <span style="display:inline-block; background-color:#DCFCE7; color:#166534; font-size:13px; font-weight:bold; padding:6px 12px; border-radius:999px;">
+                  📎 Este correo incluye un archivo adjunto
+                </span>
+                <div style="color:#16A34A; font-size:20px; font-weight:bold; margin-top:8px;">▼</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px; font-size:15px; line-height:1.5; color:#1F2937;">
+                <p style="margin:0 0 16px 0;">Hola ${nombre},</p>
+                <p style="margin:0 0 16px 0;">Adjunto encontrarás tu liquidación de sueldo correspondiente a <strong>${mes} ${anio}</strong>.</p>
+                <p style="margin:0 0 16px 0;">Si tienes alguna consulta, no dudes en contactarnos.</p>
+                <p style="margin:0;">Atentamente,<br><strong>Lart Consultores</strong></p>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding:24px; border-top:1px solid #E5E7EB;">
+                <img src="https://lartconsultores.cl/lc_verde.png" width="60" height="50" alt="Lart Consultores" style="display:block; opacity:0.6; margin:0 auto 12px auto;">
+                <p style="margin:0 0 8px 0; font-size:12px; color:#9CA3AF; text-align:center;">
+                  Este es un correo generado automáticamente por el sistema de Lart Consultores.
+                </p>
+                <p style="margin:0; font-size:12px; color:#9CA3AF; text-align:center;">
+                  ¿No reconoces esta notificación o sientes que es un error? <a href="https://lartconsultores.cl/reporta-un-problema" style="color:#16A34A;">Contáctanos</a>
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
+function renderTextoLiquidacion({ nombreTrabajador, mes, anio }) {
+  const nombre = nombreTrabajador || '';
+  return `Hola ${nombre},
+
+Adjunto encontrarás tu liquidación de sueldo correspondiente a ${mes} ${anio}.
+
+Si tienes alguna consulta, no dudes en contactarnos.
+
+Atentamente,
+Lart Consultores
+
+---
+Este es un correo generado automáticamente por el sistema de Lart Consultores.
+¿No reconoces esta notificación o sientes que es un error? Contáctanos: https://lartconsultores.cl/reporta-un-problema`;
+}
+
 async function extraerLiquidacion({ rut_trabajador, empresa_codigo, mes, anio, correo_trabajador, nombre_trabajador }) {
   const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -109,13 +187,8 @@ async function extraerLiquidacion({ rut_trabajador, empresa_codigo, mes, anio, c
       from: process.env.FROM_EMAIL,
       to: correo_trabajador,
       subject: `Tu liquidación de sueldo — ${nombreMes} ${anio}`,
-      html: `
-        <p>Hola ${nombre_trabajador || ''},</p>
-        <p>Adjunto encontrarás tu liquidación de sueldo correspondiente a <strong>${nombreMes} ${anio}</strong>.</p>
-        <p>Si tienes alguna consulta, no dudes en contactarnos.</p>
-        <br>
-        <p>Saludos,<br><strong>Lart Consultores</strong></p>
-      `,
+      html: renderEmailLiquidacion({ nombreTrabajador: nombre_trabajador, mes: nombreMes, anio }),
+      text: renderTextoLiquidacion({ nombreTrabajador: nombre_trabajador, mes: nombreMes, anio }),
       attachments: [
         {
           filename: `Liquidacion_${nombreMes}_${anio}.pdf`,
