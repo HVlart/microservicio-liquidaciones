@@ -66,7 +66,8 @@ app.post('/extraer-liquidacion', async (req, res) => {
   } catch (error) {
     const mensaje = resumirError(error);
     console.error('Error en extracción:', mensaje);
-    res.status(500).json({ error: mensaje || 'Error al procesar la liquidación' });
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: mensaje || 'Error al procesar la liquidación' });
   }
 });
 

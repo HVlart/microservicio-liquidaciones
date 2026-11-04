@@ -183,7 +183,8 @@ async function extraerLiquidacion({ rut_trabajador, empresa_codigo, mes, anio, c
     const nombreMes = new Intl.DateTimeFormat('es-CL', { month: 'long' }).format(new Date(anio, mes - 1));
 
     // ENVIAR CORREO
-    await resend.emails.send({
+    // Resend no lanza excepción si falla: devuelve { data, error }
+    const { error: errorCorreo } = await resend.emails.send({
       from: process.env.FROM_EMAIL,
       to: correo_trabajador,
       subject: `Tu liquidación de sueldo — ${nombreMes} ${anio}`,
@@ -196,6 +197,14 @@ async function extraerLiquidacion({ rut_trabajador, empresa_codigo, mes, anio, c
         }
       ]
     });
+
+    if (errorCorreo) {
+      // Solo el tipo: el mensaje de Resend puede incluir el correo del destinatario
+      console.error('Error de Resend:', errorCorreo.name);
+      const error = new Error('CORREO_NO_ENVIADO');
+      error.statusCode = 502;
+      throw error;
+    }
 
     console.log('Correo enviado');
 
@@ -228,12 +237,6 @@ function detectarColumnas(textosFila) {
   }
 
   return { rut: idxRut, disponibles: idxDisponibles, usados: idxUsados, saldo: idxSaldo };
-}
-
-// DIAGNÓSTICO TEMPORAL — remover una vez confirmado que el postback de #SujetoContable no se pierde
-async function logOpcionSeleccionada(selectLocator, etiqueta) {
-  const value = await selectLocator.evaluate(el => el.value);
-  console.log(`DEBUG [${etiqueta}] #SujetoContable seleccionado — value: "${value}"`);
 }
 
 async function consultarSaldoVacaciones({ rut_trabajador, numero_cliente }) {
@@ -290,15 +293,9 @@ async function consultarSaldoVacaciones({ rut_trabajador, numero_cliente }) {
     const valorMatch = await opciones.nth(indiceMatch).getAttribute('value');
     await sujetoSelect.selectOption(valorMatch);
 
-    // DIAGNÓSTICO TEMPORAL — confirmar que la empresa seleccionada es la esperada
-    await logOpcionSeleccionada(sujetoSelect, 'inmediatamente después de selectOption');
-
     // Esperar a que Nubox procese el postback del cambio de empresa (ASP clásico)
     await frame.locator('body').waitFor();
     await page.waitForTimeout(1500);
-
-    // DIAGNÓSTICO TEMPORAL — confirmar que la selección se mantiene tras la espera del postback
-    await logOpcionSeleccionada(sujetoSelect, 'antes de clic en Reporte Vacaciones');
 
     // ABRIR REPORTE VACACIONES (abre un iframe nuevo y separado)
     await frame.getByRole('link', { name: 'Reporte Vacaciones' }).click();
@@ -321,9 +318,6 @@ async function consultarSaldoVacaciones({ rut_trabajador, numero_cliente }) {
       const filas = tablaResultados.locator('tr');
       const totalFilas = await filas.count();
       let indicesColumnas = null;
-
-      // DIAGNÓSTICO TEMPORAL — remover una vez resuelto el matcheo de RUT
-      console.log(`DEBUG página ${pagina + 1} — filas detectadas: ${totalFilas}`);
 
       for (let i = 0; i < totalFilas; i++) {
         const celdas = filas.nth(i).locator('th, td');
