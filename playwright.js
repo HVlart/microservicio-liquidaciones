@@ -105,13 +105,13 @@ async function extraerLiquidacion({ rut_trabajador, empresa_codigo, mes, anio, c
       (contentType.includes('application/pdf') || url.includes('.pdf')) &&
       url.startsWith('https://app.nubox.com')
     ) {
-      console.log('PDF URL capturada:', url);
+      console.log('PDF URL capturada');
       pdfUrl = url;
     }
   });
 
   try {
-    console.log(`Iniciando extracción: ${rut_trabajador} | ${empresa_codigo} | ${periodo}`);
+    console.log(`Iniciando extracción: ${empresa_codigo} | ${periodo}`);
 
     // LOGIN
     await page.goto('https://web.nubox.com/Login');
@@ -197,7 +197,7 @@ async function extraerLiquidacion({ rut_trabajador, empresa_codigo, mes, anio, c
       ]
     });
 
-    console.log(`Correo enviado a ${correo_trabajador}`);
+    console.log('Correo enviado');
 
   } finally {
     await browser.close();
@@ -232,11 +232,8 @@ function detectarColumnas(textosFila) {
 
 // DIAGNÓSTICO TEMPORAL — remover una vez confirmado que el postback de #SujetoContable no se pierde
 async function logOpcionSeleccionada(selectLocator, etiqueta) {
-  const seleccion = await selectLocator.evaluate(el => ({
-    value: el.value,
-    texto: el.options[el.selectedIndex] ? el.options[el.selectedIndex].text : null
-  }));
-  console.log(`DEBUG [${etiqueta}] #SujetoContable seleccionado — value: "${seleccion.value}", texto: "${seleccion.texto}"`);
+  const value = await selectLocator.evaluate(el => el.value);
+  console.log(`DEBUG [${etiqueta}] #SujetoContable seleccionado — value: "${value}"`);
 }
 
 async function consultarSaldoVacaciones({ rut_trabajador, numero_cliente }) {
@@ -249,7 +246,7 @@ async function consultarSaldoVacaciones({ rut_trabajador, numero_cliente }) {
   const page = await context.newPage();
 
   try {
-    console.log(`Consultando saldo de vacaciones: ${rut_trabajador} | ${numero_cliente}`);
+    console.log(`Consultando saldo de vacaciones: ${numero_cliente}`);
 
     // LOGIN
     await page.goto('https://web.nubox.com/Login');
@@ -327,13 +324,6 @@ async function consultarSaldoVacaciones({ rut_trabajador, numero_cliente }) {
 
       // DIAGNÓSTICO TEMPORAL — remover una vez resuelto el matcheo de RUT
       console.log(`DEBUG página ${pagina + 1} — filas detectadas: ${totalFilas}`);
-      console.log('DEBUG rutNormalizado buscado:', rutNormalizado);
-      try {
-        const tablaTexto = await tablaResultados.innerText();
-        console.log('DEBUG texto completo de la tabla:', tablaTexto);
-      } catch (debugError) {
-        console.log('DEBUG no se pudo obtener innerText de la tabla:', debugError.message);
-      }
 
       for (let i = 0; i < totalFilas; i++) {
         const celdas = filas.nth(i).locator('th, td');
@@ -345,7 +335,6 @@ async function consultarSaldoVacaciones({ rut_trabajador, numero_cliente }) {
         }
 
         const rutFilaNormalizado = textosCelda[indicesColumnas.rut] ? normalizarRut(textosCelda[indicesColumnas.rut]) : null;
-        console.log(`DEBUG fila ${i}: rut original="${textosCelda[indicesColumnas.rut]}" normalizado="${rutFilaNormalizado}" vs buscado="${rutNormalizado}" match=${rutFilaNormalizado === rutNormalizado}`);
 
         if (rutFilaNormalizado === rutNormalizado) {
           filaEncontrada = {
@@ -379,7 +368,7 @@ async function consultarSaldoVacaciones({ rut_trabajador, numero_cliente }) {
       throw error;
     }
 
-    console.log(`Saldo de vacaciones encontrado para ${rut_trabajador}`);
+    console.log('Saldo de vacaciones encontrado');
 
     return {
       ...filaEncontrada,

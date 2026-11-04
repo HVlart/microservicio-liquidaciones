@@ -1,22 +1,44 @@
 require('dotenv').config();
+const crypto = require('crypto');
 const express = require('express');
 const { extraerLiquidacion, consultarSaldoVacaciones } = require('./playwright');
 const pLimit = require('p-limit');
 const limit = pLimit(3); // máximo 3 Chromium simultáneos
 
 const app = express();
-app.use(express.json());
+app.set('trust proxy', 1); // Railway antepone un proxy; sin esto req.ip sería la IP del proxy
 
-// Middleware de autenticación simple
+// Compara en tiempo constante. Se comparan los SHA-256 porque timingSafeEqual exige
+// buffers del mismo largo y así tampoco se revela el largo de la clave.
+// Si API_SECRET_KEY no está configurada se rechaza todo.
+function claveValida(recibida, esperada) {
+  if (typeof recibida !== 'string' || !esperada) return false;
+  const hashRecibida = crypto.createHash('sha256').update(recibida).digest();
+  const hashEsperada = crypto.createHash('sha256').update(esperada).digest();
+  return crypto.timingSafeEqual(hashRecibida, hashEsperada);
+}
+
+// Los mensajes de Playwright incluyen localizadores (con el RUT) y HTML de la página
+// (con nombres de trabajadores). Solo se conserva la primera línea, sin RUT, correos ni URLs.
+function resumirError(error) {
+  return String(error?.message || '')
+    .split('\n')[0]
+    .replace(/https?:\/\/\S+/g, '[url]')
+    .replace(/\S+@\S+/g, '[correo]')
+    .replace(/\d{1,2}\.?\d{3}\.?\d{3}(-?[\dkK])?/g, '[rut]');
+}
+
+// Middleware de autenticación simple. Va antes de express.json() para no procesar
+// cuerpos de solicitudes no autenticadas. Nunca registrar el valor de la clave.
 app.use((req, res, next) => {
-  const apiKey = req.headers['x-api-key'];
-  console.log('API Key recibida:', JSON.stringify(apiKey));
-  console.log('API Key esperada:', JSON.stringify(process.env.API_SECRET_KEY));
-  if (apiKey !== process.env.API_SECRET_KEY) {
+  if (!claveValida(req.headers['x-api-key'], process.env.API_SECRET_KEY)) {
+    console.warn(`autenticación fallida ip=${req.ip} hora=${new Date().toISOString()}`);
     return res.status(401).json({ error: 'No autorizado' });
   }
   next();
 });
+
+app.use(express.json());
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
@@ -42,8 +64,9 @@ app.post('/extraer-liquidacion', async (req, res) => {
     );
     res.json({ success: true, mensaje: 'Liquidación enviada correctamente' });
   } catch (error) {
-    console.error('Error en extracción:', error.message);
-    res.status(500).json({ error: error.message || 'Error al procesar la liquidación' });
+    const mensaje = resumirError(error);
+    console.error('Error en extracción:', mensaje);
+    res.status(500).json({ error: mensaje || 'Error al procesar la liquidación' });
   }
 });
 
@@ -60,10 +83,19 @@ app.post('/consultar-saldo-vacaciones', async (req, res) => {
     );
     res.json(resultado);
   } catch (error) {
-    console.error('Error al consultar saldo de vacaciones:', error.message);
+    const mensaje = resumirError(error);
+    console.error('Error al consultar saldo de vacaciones:', mensaje);
     const status = error.statusCode || 500;
-    res.status(status).json({ error: error.message || 'Error al consultar el saldo de vacaciones' });
+    res.status(status).json({ error: mensaje || 'Error al consultar el saldo de vacaciones' });
   }
+});
+
+// Reemplaza el manejador por defecto de Express, que escribe err.stack en los logs: en un
+// JSON malformado ese texto incluye un fragmento del cuerpo (RUT, correo). Solo se registra el tipo.
+app.use((err, req, res, next) => {
+  const status = err.status || 500;
+  console.error('Error en solicitud:', err.type || err.name);
+  res.status(status).json({ error: status < 500 ? 'Solicitud inválida' : 'Error interno' });
 });
 
 const PORT = process.env.PORT || 3000;
