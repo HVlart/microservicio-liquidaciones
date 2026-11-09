@@ -82,18 +82,56 @@ Este es un correo generado automáticamente por el sistema de Lart Consultores.
 ¿No reconoces esta notificación o sientes que es un error? Contáctanos: https://lartconsultores.cl/reporta-un-problema`;
 }
 
-async function extraerLiquidacion({ rut_trabajador, empresa_codigo, mes, anio, correo_trabajador, nombre_trabajador }) {
-  const resend = new Resend(process.env.RESEND_API_KEY);
+const NUBOX_LOGIN_URL_DEFECTO = 'https://web.nubox.com/Login';
+const NUBOX_PDF_ORIGEN_DEFECTO = 'https://app.nubox.com';
+// Es el mismo valor que Playwright usa por defecto: en producción no cambia nada.
+const TIMEOUT_ACCION_DEFECTO_MS = 30000;
+// Espera explícita del botón "Acciones" (ya existía con este valor).
+const TIMEOUT_ACCIONES_MS = 15000;
 
-  const mesFormateado = String(mes).padStart(2, '0');
-  const periodo = `${mesFormateado}/${anio}`;
+// Se lee en cada llamada para que las pruebas puedan apuntar a un Nubox simulado.
+function configNubox() {
+  return {
+    loginUrl: process.env.NUBOX_LOGIN_URL || NUBOX_LOGIN_URL_DEFECTO,
+    pdfOrigen: process.env.NUBOX_PDF_ORIGEN || NUBOX_PDF_ORIGEN_DEFECTO,
+    timeoutAccionMs: Number(process.env.NUBOX_TIMEOUT_ACCION_MS) || TIMEOUT_ACCION_DEFECTO_MS
+  };
+}
 
-  const browser = await chromium.launch({ 
+function lanzarNavegador() {
+  return chromium.launch({
     headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox']
   });
-  
+}
+
+// Ejecuta un paso de la navegación y, si falla, etiqueta el error con un código estable
+// (error.codigo) sin tocar su mensaje: el modo "enviar" sigue respondiendo exactamente igual.
+async function paso(codigo, fn) {
+  try {
+    return await fn();
+  } catch (error) {
+    if (error && typeof error === 'object' && !error.codigo) error.codigo = codigo;
+    throw error;
+  }
+}
+
+function nombreMesLiquidacion(mes, anio) {
+  return new Intl.DateTimeFormat('es-CL', { month: 'long' }).format(new Date(anio, mes - 1));
+}
+
+function nombreArchivoLiquidacion(mes, anio) {
+  return `Liquidacion_${nombreMesLiquidacion(mes, anio)}_${anio}.pdf`;
+}
+
+// Navegación por Nubox común a ambos modos de entrega: inicia sesión, ubica la liquidación
+// y descarga el PDF. No valida el contenido ni envía nada.
+async function descargarPdfLiquidacion(browser, { rut_trabajador, empresa_codigo, periodo }) {
+  const { loginUrl, pdfOrigen, timeoutAccionMs } = configNubox();
+
   const context = await browser.newContext({ acceptDownloads: true });
+  context.setDefaultTimeout(timeoutAccionMs);
+  context.setDefaultNavigationTimeout(timeoutAccionMs);
   const page = await context.newPage();
 
   // Capturar la URL del PDF monitoreando las responses
@@ -103,18 +141,16 @@ async function extraerLiquidacion({ rut_trabajador, empresa_codigo, mes, anio, c
     const url = response.url();
     if (
       (contentType.includes('application/pdf') || url.includes('.pdf')) &&
-      url.startsWith('https://app.nubox.com')
+      url.startsWith(pdfOrigen)
     ) {
       console.log('PDF URL capturada');
       pdfUrl = url;
     }
   });
 
-  try {
-    console.log(`Iniciando extracción: ${empresa_codigo} | ${periodo}`);
-
-    // LOGIN
-    await page.goto('https://web.nubox.com/Login');
+  // LOGIN
+  await paso('NUBOX_NO_DISPONIBLE', async () => {
+    await page.goto(loginUrl);
 
     // Escribir RUT simulando tipeo real para que Nubox habilite el botón
     await page.getByRole('textbox', { name: 'Ingresa tu rut' }).click();
@@ -136,29 +172,41 @@ async function extraerLiquidacion({ rut_trabajador, empresa_codigo, mes, anio, c
       // No apareció, continuar normal
     }
 
-    // NAVEGAR A LIQUIDACIONES
+    // NAVEGAR A LIQUIDACIONES (si el login falló, aquí no aparece el menú)
     await page.getByText('Remuneraciones 2').click();
     await page.getByRole('button', { name: 'Movimientos' }).first().click();
     await page.getByRole('button', { name: 'Liquidaciones de Sueldo' }).click();
 
-    // SELECCIONAR EMPRESA
     await page.locator('#page-header').getByRole('textbox').click();
-    await page.getByRole('option', { name: new RegExp(empresa_codigo, 'i') }).click();
+  });
 
-    // FILTRAR PERÍODO
+  // SELECCIONAR EMPRESA
+  await paso('EMPRESA_NO_ENCONTRADA', () =>
+    page.getByRole('option', { name: new RegExp(empresa_codigo, 'i') }).click()
+  );
+
+  // FILTRAR PERÍODO
+  await paso('NUBOX_NO_DISPONIBLE', async () => {
     await page.getByRole('textbox', { name: 'MM/YYYY' }).first().fill(periodo);
     await page.keyboard.press('Enter');
     await page.getByRole('textbox', { name: 'MM/YYYY' }).nth(1).fill(periodo);
     await page.keyboard.press('Enter');
 
-    // SELECCIONAR COLABORADOR
     await page.getByRole('textbox', { name: 'Todos los colaboradores' }).click();
-    await page.getByRole('option', { name: new RegExp(rut_trabajador.split('-')[0], 'i') }).click();
+  });
 
-    // ESPERAR BOTÓN ACCIONES
-    await page.getByRole('button', { name: 'Acciones' }).waitFor({ timeout: 15000 });
+  // SELECCIONAR COLABORADOR
+  await paso('TRABAJADOR_NO_ENCONTRADO', () =>
+    page.getByRole('option', { name: new RegExp(rut_trabajador.split('-')[0], 'i') }).click()
+  );
 
-    // ABRIR MENÚ Y DESCARGAR PDF
+  // ESPERAR BOTÓN ACCIONES (si no aparece, no hay liquidación para ese período)
+  await paso('DOCUMENTO_NO_ENCONTRADO', () =>
+    page.getByRole('button', { name: 'Acciones' }).waitFor({ timeout: Math.min(TIMEOUT_ACCIONES_MS, timeoutAccionMs) })
+  );
+
+  // ABRIR MENÚ Y DESCARGAR PDF
+  return paso('NUBOX_NO_DISPONIBLE', async () => {
     await page.getByRole('button', { name: 'Acciones' }).click();
     await page.getByRole('menuitem', { name: 'Descargar PDF' }).hover();
     await page.waitForTimeout(500);
@@ -175,12 +223,29 @@ async function extraerLiquidacion({ rut_trabajador, empresa_codigo, mes, anio, c
 
     // Descargar el PDF usando la URL capturada con las cookies de sesión
     const pdfResponse = await page.request.get(pdfUrl);
-    const pdfBuffer = await pdfResponse.body();
+    const buffer = await pdfResponse.body();
+    return { buffer, status: pdfResponse.status() };
+  });
+}
+
+// Modo "enviar" (por defecto): obtiene la liquidación y la envía con Resend.
+async function extraerLiquidacion({ rut_trabajador, empresa_codigo, mes, anio, correo_trabajador, nombre_trabajador }) {
+  const resend = new Resend(process.env.RESEND_API_KEY);
+
+  const mesFormateado = String(mes).padStart(2, '0');
+  const periodo = `${mesFormateado}/${anio}`;
+
+  const browser = await lanzarNavegador();
+
+  try {
+    console.log(`Iniciando extracción: ${empresa_codigo} | ${periodo}`);
+
+    const { buffer: pdfBuffer } = await descargarPdfLiquidacion(browser, { rut_trabajador, empresa_codigo, periodo });
 
     console.log(`PDF descargado: ${pdfBuffer.length} bytes`);
 
     const pdfBase64 = pdfBuffer.toString('base64');
-    const nombreMes = new Intl.DateTimeFormat('es-CL', { month: 'long' }).format(new Date(anio, mes - 1));
+    const nombreMes = nombreMesLiquidacion(mes, anio);
 
     // ENVIAR CORREO
     // Resend no lanza excepción si falla: devuelve { data, error }
@@ -192,7 +257,7 @@ async function extraerLiquidacion({ rut_trabajador, empresa_codigo, mes, anio, c
       text: renderTextoLiquidacion({ nombreTrabajador: nombre_trabajador, mes: nombreMes, anio }),
       attachments: [
         {
-          filename: `Liquidacion_${nombreMes}_${anio}.pdf`,
+          filename: nombreArchivoLiquidacion(mes, anio),
           content: pdfBase64,
         }
       ]
@@ -210,6 +275,42 @@ async function extraerLiquidacion({ rut_trabajador, empresa_codigo, mes, anio, c
 
   } finally {
     await browser.close();
+  }
+}
+
+// Modo "devolver": obtiene la liquidación y la entrega a quien llama, sin enviar correo.
+// `signal` permite abortar (tiempo agotado o cliente desconectado): se cierra Chromium de
+// inmediato y se lanza el motivo del aborto (un error con `codigo`).
+async function obtenerLiquidacion({ rut_trabajador, empresa_codigo, mes, anio, signal }) {
+  const periodo = `${String(mes).padStart(2, '0')}/${anio}`;
+
+  if (signal?.aborted) throw signal.reason;
+
+  const browser = await lanzarNavegador();
+  const alAbortar = () => { browser.close().catch(() => {}); };
+  signal?.addEventListener('abort', alAbortar, { once: true });
+
+  try {
+    if (signal?.aborted) throw signal.reason;
+    console.log(`Iniciando obtención (devolver): ${empresa_codigo} | ${periodo}`);
+
+    const { buffer, status } = await descargarPdfLiquidacion(browser, { rut_trabajador, empresa_codigo, periodo });
+
+    // A diferencia del modo "enviar", se verifica que lo descargado sea realmente un PDF.
+    const esPdf = status >= 200 && status < 300 && buffer.subarray(0, 5).toString('latin1') === '%PDF-';
+    if (!esPdf) {
+      const error = new Error(`Respuesta de Nubox no es un PDF (HTTP ${status}, ${buffer.length} bytes)`);
+      error.codigo = 'NUBOX_NO_DISPONIBLE';
+      throw error;
+    }
+
+    return { pdf: buffer, nombre_archivo: nombreArchivoLiquidacion(mes, anio) };
+  } catch (error) {
+    if (signal?.aborted) throw signal.reason;
+    throw error;
+  } finally {
+    signal?.removeEventListener('abort', alAbortar);
+    await browser.close().catch(() => {});
   }
 }
 
@@ -374,4 +475,4 @@ async function consultarSaldoVacaciones({ rut_trabajador, numero_cliente }) {
   }
 }
 
-module.exports = { extraerLiquidacion, consultarSaldoVacaciones };
+module.exports = { extraerLiquidacion, obtenerLiquidacion, consultarSaldoVacaciones };
